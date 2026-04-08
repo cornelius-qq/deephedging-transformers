@@ -3,9 +3,8 @@ import torch
 import torch.nn as nn
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+
 # 1.  Causal Multi-Head Self-Attention
-# ──────────────────────────────────────────────────────────────────────────────
 
 class CausalMultiHeadSelfAttention(nn.Module):
     """
@@ -42,7 +41,7 @@ class CausalMultiHeadSelfAttention(nn.Module):
         self.W_v = nn.Linear(d_model, d_model, bias=True)
         self.W_o = nn.Linear(d_model, d_model, bias=True)
 
-    # ── helper: reshape between [N, seq, d_model] and [N, n_heads, seq, d_k] ──
+    # helper: reshape between [N, seq, d_model] and [N, n_heads, seq, d_k]
 
     def _split_heads(self, x: torch.Tensor) -> torch.Tensor:
         """[N, seq, d_model] -> [N, n_heads, seq, d_k]"""
@@ -56,7 +55,7 @@ class CausalMultiHeadSelfAttention(nn.Module):
         # transpose restores (N, seq, n_heads, d_k); contiguous is required before view
         return x.transpose(1, 2).contiguous().view(N, seq, self.d_model)
 
-    # ── forward ───────────────────────────────────────────────────────────────
+    # forward
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -98,9 +97,7 @@ class CausalMultiHeadSelfAttention(nn.Module):
         return out
 
 
-# ──────────────────────────────────────────────────────────────────────────────
 # 2.  Position-wise Feed-Forward Block
-# ──────────────────────────────────────────────────────────────────────────────
 
 class FeedForwardBlock(nn.Module):
     """
@@ -133,9 +130,7 @@ class FeedForwardBlock(nn.Module):
         return self.linear_contract(self.activation(self.linear_expand(x)))
 
 
-# ──────────────────────────────────────────────────────────────────────────────
 # 3.  Pre-LayerNorm Transformer Block
-# ──────────────────────────────────────────────────────────────────────────────
 
 class PreLNTransformerBlock(nn.Module):
     """
@@ -176,9 +171,7 @@ class PreLNTransformerBlock(nn.Module):
         return x
 
 
-# ──────────────────────────────────────────────────────────────────────────────
 # 4.  Causal Transformer Hedge Network
-# ──────────────────────────────────────────────────────────────────────────────
 
 class TransformerHedgeNet(nn.Module):
     """
@@ -226,31 +219,31 @@ class TransformerHedgeNet(nn.Module):
 
         self.d_model = d_model
 
-        # ── Input projection ──────────────────────────────────────────────────
+        # Input projection
         # Maps the raw feature vector at each timestep from n_features to d_model.
         # All timesteps share the same projection weights (no positional bias here).
         self.input_projection = nn.Linear(n_features, d_model)
 
-        # ── Learned positional embedding ─────────────────────────────────────
+        # Learned positional embedding
         # Stores one d_model vector per position index 0 ... max_len-1.
         # Learned PE consistently outperforms sinusoidal PE on short, fixed-horizon
         # sequences like a 50-step hedging episode.
         self.positional_embedding = nn.Embedding(max_len, d_model)
 
-        # ── Stacked Transformer blocks ────────────────────────────────────────
+        # Stacked Transformer blocks
         # nn.ModuleList ensures PyTorch registers all sub-layers for parameter tracking.
         self.transformer_blocks = nn.ModuleList([
             PreLNTransformerBlock(d_model, n_heads, d_ff)
             for _ in range(n_blocks)
         ])
 
-        # ── Final LayerNorm ───────────────────────────────────────────────────
+        # Final LayerNorm
         # Applied after all blocks and before the output projection.
         # Required by the Pre-LN convention: the residual stream is not normalised
         # at the exit of the last block, so we normalise here.
         self.final_layer_norm = nn.LayerNorm(d_model, eps=1e-6)
 
-        # ── Output head ───────────────────────────────────────────────────────
+        # Output head
         # Projects the d_model representation at each position to a single scalar
         # (the hedge ratio delta_t). No activation: deltas are unconstrained.
         self.output_head = nn.Linear(d_model, 1)
@@ -271,10 +264,10 @@ class TransformerHedgeNet(nn.Module):
         """
         N, T, _ = features.shape
 
-        # ── 1. Project raw features to model dimension ────────────────────────
+        # 1. Project raw features to model dimension
         x = self.input_projection(features)   # [N, T, d_model]
 
-        # ── 2. Add learned positional embeddings ─────────────────────────────
+        # 2. Add learned positional embeddings
         # positions is a 1-D index tensor [0, 1, ..., T-1] on the same device
         # as the input. The embedding lookup returns [T, d_model]; unsqueeze
         # adds the batch dimension for broadcasting over N paths.
@@ -282,15 +275,15 @@ class TransformerHedgeNet(nn.Module):
         pos_emb   = self.positional_embedding(positions)          # [T, d_model]
         x = x + pos_emb.unsqueeze(0)                              # [N, T, d_model]
 
-        # ── 3. Pass through all Transformer blocks ────────────────────────────
+        # 3. Pass through all Transformer blocks
         # Each block applies causal self-attention + FFN with residual connections.
         for block in self.transformer_blocks:
             x = block(x)   # [N, T, d_model] -> [N, T, d_model]
 
-        # ── 4. Final layer normalisation ──────────────────────────────────────
+        # 4. Final layer normalisation 
         x = self.final_layer_norm(x)   # [N, T, d_model]
 
-        # ── 5. Project each position's representation to a scalar delta ───────
+        # 5. Project each position's representation to a scalar delta
         deltas = self.output_head(x)   # [N, T, 1]
         deltas = deltas.squeeze(-1)    # [N, T]
 
